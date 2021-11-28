@@ -67,40 +67,40 @@ def XYZtoTensor(XYZ):
             if i in range(2, len(species)+2):
                 species[i-2] = line.split()[0]
         f.close()
-        
+
         frames = math.floor(line_count / (len(species) + 2))
         #genero una lista vacia con la cantidad de frames que hay
         tensor_coordinates = [0]*frames
         tensor_species = [0]*frames
-    
+
         #transformo los atomos en sus indices de la tabla periodica
         for i, atom in enumerate(species):
             species[i] = periodic_table[atom]
 
         #lo convierto en un tensor de la dimension requerida
         species = torch.tensor(species).unsqueeze(0)
-        
+
         #recorro las lineas de nuevo :s
     with open(XYZ, 'r') as f:
         for i, line in enumerate(f):
             for numero_de_frame, frame in enumerate(tensor):
-                
+
                 #genero una lista con los elementos de cada linea
                 lista_linea = line.split()
-                #guardo las coordenadas 
+                #guardo las coordenadas
                 coordinates[i] = lista_linea[-3:]
                 print(coordinates)
             frame = np.array(coordinates, dtype=float)
-    
+
         #transformo las coordenadas a tensores de pytorch
         tensor = torch.tensor(tensor, requires_grad=True, dtype=torch.float32)
-    
+
     return tensor_species, tensor_coordinates
 
 
 def TensortoXYZ(species, tensor, nombre):
     XYZ = open (nombre,'w')
-    num_atoms = len(species[0]) 
+    num_atoms = len(species[0])
     frames = tensor.shape[0]
     symbols  = [] #vector de los simbolos de los atomos
     for i, atom in enumerate(species[0]):
@@ -109,9 +109,9 @@ def TensortoXYZ(species, tensor, nombre):
         XYZ.write(num_atoms+'\n'+'archivo generado con TensortoXYZ'+'\n')
         for j in range(num_atoms):
             line = symbols[j]+" "+str(float(tensor[i][j][0]))+" "+str(float(tensor[i][j][1]))+" "+str(float(tensor[i][j][2]))+"\n"
-            XYZ.write(line)  
-    XYZ.close()   
-    return 
+            XYZ.write(line)
+    XYZ.close()
+    return
 
 def extraer_N_estructuras(lista_indices, formula, database):
     coordenadas = database[formula+'/coordinates']
@@ -121,27 +121,13 @@ def extraer_N_estructuras(lista_indices, formula, database):
     estructuras_sel = torch.tensor(estructuras_seleccionadas)
     return estructuras_sel
 
-def extraer_N_cargas(lista_indices, formula, database):
-    indices_válidos = []
+def extraer_N_cargas(indice, formula, database):
 
-    cargas_cm5        = database[formula+'/wb97x_dz.cm5_charges']
-    cargas_hirshfeld = database[formula+'/wb97x_dz.hirshfeld_charges']
-    cargas_mbis       = database[formula+'/wb97x_tz.mbis_charges']
-    
-    cargas_seleccionadas_cm5 = []
-    cargas_seleccionadas_hirshfeld = []
-    cargas_seleccionadas_mbis = []
-    
-    for i in lista_indices:
-        cargas_seleccionadas_cm5.append(cargas_cm5[i])
-        cargas_seleccionadas_hirshfeld.append(cargas_hirshfeld[i])
-        cargas_seleccionadas_mbis.append(cargas_mbis[i])
-        
-    cargas_sel_cm5 = torch.tensor(cargas_seleccionadas_cm5)
-    cargas_sel_hirshfeld = torch.tensor(cargas_seleccionadas_hirshfeld)
-    cargas_sel_mbis = torch.tensor(cargas_seleccionadas_mbis)
-    
-    return cargas_sel_cm5, cargas_sel_hirshfeld, cargas_sel_mbis
+    cargas_cm5        = database[formula+'/wb97x_dz.cm5_charges'][indice]
+    cargas_hirshfeld = database[formula+'/wb97x_dz.hirshfeld_charges'][indice]
+    cargas_mbis       = database[formula+'/wb97x_tz.mbis_charges'][indice]
+
+    return cargas_cm5, cargas_hirshfeld, cargas_mbis
 
 
 def unit_vector(vector):
@@ -301,15 +287,15 @@ def solvate(structure, wat):
     waters = keepOnlyNCloser(waters, structure, wat)
     waters = addHydrogens(waters)
     waters = torch.Tensor(waters)
-    solvated_structure = torch.cat((structure, waters))
-    
+    solvated_structure = torch.stack((structure, waters))
+
     return solvated_structure
 
 def append_water_charges(charges, wat):
-    total_charges = torch.empty(size=(charges.shape[0], charges.shape[1]+3*wat))
-    charges_h20 = torch.Tensor([-0.834,0.417,0.417]*wat)
-    for i, charge in enumerate(charges):
-        total_charges[i] = torch.cat((charge, charges_h20))
+    charges = charges.numpy()
+    charges_h20 = np.array([-0.834,0.417,0.417]*wat)
+    total_charges = np.concatenate((charges, charges_h20))
+    total_charges= torch.Tensor(total_charges)
     return total_charges
 
 
@@ -323,33 +309,73 @@ def E_field2(r,q,nqm,ntot,i):
     E_field=torch.zeros(3)
     for j in range(nqm,ntot):
         rij = np.array([r[j][0].item() - r[i][0].item(), r[j][1].item() - r[i][1].item(), r[j][2].item() - r[i][2].item()])
-        distij = dist(r[i][0].item(), r[i][1].item(),r[i][2].item(), r[j][0].item(), r[j][1].item(),r[j][2].item()) 
+        distij = dist(r[i][0].item(), r[i][1].item(),r[i][2].item(), r[j][0].item(), r[j][1].item(),r[j][2].item())
         rij = rij/distij
         for k in range(3):
             E_field[k] = E_field[k]+(q[j].item()/distij**2)*rij[k]
     E_field2=E_field[0]**2+E_field[1]**2+E_field[2]**2
     return E_field2
 
-def compute_coulomb(r, q, species):
+def estaEnRango(r,nqm,j,cutoff):
+    esta=False
+    i=0
+    while (not esta and i<nqm):
+        rij = np.array([r[j][0].item() - r[i][0].item(), r[j][1].item() - r[i][1].item(), r[j][2].item() - r[i][2].item()])
+        distij = dist(r[i][0].item(), r[i][1].item(),r[i][2].item(), r[j][0].item(), r[j][1].item(),r[j][2].item())
+        esta = esta or distij < cutoff
+        i=i+1
+    return esta
+
+def get_indice_aguas_en_rango(r,atoms_qm,cutoff):
+    lista=[]
+    for i in range(0,atoms_qm):
+        lista.append(0)
+    for i in range(atoms_qm,len(r)):
+        if (estaEnRango(r,atoms_qm,i,cutoff)):
+            lista.append(1)
+        else:
+            lista.append(0)
+    return lista
+
+
+def compute_coulomb(r, q_cm5, q_hir, q_mbis, q_mul_sol, q_mul_vac, species, lista):
     nqm = len(species)
-    ntot = len(r)
-
-    E_elec = 0.0
-    for i in range(nqm):
-        for j in range(nqm, ntot):
-            E_elec = E_elec + q[i].item()*q[j].item()/dist(r[i][0].item(),r[i][1].item(),r[i][2].item(),r[j][0].item(),r[j][1].item(),r[j][2].item())
-    E_elec = E_elec*0.529177249*627.509391
-
+    ntot = len(q_cm5)
+    E_elec_cm5 = 0.0
+    E_elec_hir = 0.0
+    E_elec_mbis = 0.0
+    E_elec_mul_sol = 0.0
+    E_elec_mul_vac = 0.0
     E_pol = 0.0
     for i in range(nqm):
+        qi_cm5 = q_cm5[i].item()
+        qi_hir = q_hir[i].item()
+        qi_mbis = q_mbis[i].item()
+        qi_mul_sol = q_mul_sol[i].item()
+        qi_mul_vac = q_mul_vac[i].item()
         alpha = 0.14818471*polarizabilities[list(periodic_table.keys())[list(periodic_table.values()).index(species[i])]]
-        E_pol = E_pol + alpha*E_field2(r,q,nqm,ntot,i)
-    E_pol=-0.5*E_pol.item()*0.529177249*627.509391
+        E_field=torch.zeros(3)
+        for j in range(nqm, ntot):
+            qj  = q_cm5[j].item()
+            rij = np.array([r[j][0].item() - r[i][0].item(), r[j][1].item() - r[i][1].item(), r[j][2].item() - r[i][2].item()])
+            distij = dist(r[i][0].item(), r[i][1].item(),r[i][2].item(), r[j][0].item(), r[j][1].item(),r[j][2].item())
+            rij = rij/distij
+            #if estaEnRango(r,nqm,j,cutoff):
+            if lista[j]==1:
+                E_elec_cm5 = E_elec_cm5 + qi_cm5*qj/distij
+                E_elec_hir = E_elec_hir + qi_hir*qj/distij
+                E_elec_mbis = E_elec_mbis + qi_mbis*qj/distij
+                E_elec_mul_sol = E_elec_mul_sol + qi_mul_sol*qj/distij
+                E_elec_mul_vac = E_elec_mul_vac + qi_mul_vac*qj/distij
+                for k in range(3):
+                    E_field[k] = E_field[k]+(qj/distij**2)*rij[k]
+        E_field2 = E_field[0]**2+E_field[1]**2+E_field[2]**2
+        E_pol = E_pol + alpha*E_field2
+    E_elec_cm5 = E_elec_cm5*0.529177249*627.509391
+    E_elec_hir = E_elec_hir*0.529177249*627.509391
+    E_elec_mbis = E_elec_mbis*0.529177249*627.509391
+    E_elec_mul_sol = E_elec_mul_sol*0.529177249*627.509391
+    E_elec_mul_vac = E_elec_mul_vac*0.529177249*627.509391
+    E_pol = -0.5*E_pol.item()*0.529177249*627.509391
 
-        
-    return E_elec,  E_pol
-
-
-
-
-
+    return E_elec_cm5, E_elec_hir, E_elec_mbis, E_elec_mul_sol, E_elec_mul_vac, E_pol
